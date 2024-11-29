@@ -1,29 +1,30 @@
 # Auto-SSLScan
-
-Auto-SSLScan is a Python script designed to automate SSL scanning for open ports found in an Nmap XML report. The script identifies SSL services, runs `sslscan` against the discovered services, and analyzes the scan results to detect potential vulnerabilities like weak ciphers and legacy protocols.
-
-## Features
-
-- Automatically scans SSL-enabled services discovered by Nmap.
-- Identifies weak ciphers and legacy protocols (SSLv2, SSLv3, TLSv1.0, TLSv1.1).
-- Checks for vulnerable DHE ciphers (≤ 1024 bits).
-- Extracts SSL certificate expiration dates and checks for certificate status (expired, expiring soon, long expiry).
-- Detects untrusted SSL certificates.
-- Filters out weak ciphers such as CBC3, RC4, and NULL ciphers.
-- Scans using multiple threads to speed up the process.
+Auto-SSLScan is a Python script designed to automate SSL scanning for open ports found in an Nmap XML report. The script identifies SSL services, runs `sslscan` against the discovered services, and analyses the scan results to detect potential vulnerabilities.
 
 ## Prerequisites
+- [sslscan](https://github.com/rbsec/sslscan) should be installed and available in your system's PATH.
 
-- **sslscan** should be installed and available in your system's PATH.
+# Vulnerabilities Detected
+- Legacy SSL and TLS Protocols
+- TLSv1.3 Disabled
+- Certificate Expiry
+- Weak Signed Certificate RSA Keylength
+- No TLS Fallback SCSV Support
+- 3DES Ciphers
+- Diffie-Hellman Modulus < 2048-bits
+- Untrusted Certificate
+- CBC Ciphers
+- SHA-1 Hash
+- RC4 Ciphers
+- Medium Strength Ciphers
+- NULL Ciphers
+- SSL Wildcard Certificate
 
-## Usage
-<pre>auto-sslscan.py -i [nmap-output.xml] -o [output-directory] -t [num-threads]</pre>
+## Installation and Usage
+<pre>
+git clone https://github.com/BeeSec-UK/autosslscan
+cd autosslscan
+pip install -r requirements.txt
+auto-sslscan.py -i [nmap-output.xml] -o [output-directory] -t [num-threads]
+</pre>
 
-## Examples
-Setup:
-
-![](images/setup.png)
-
-Results:
-
-![](images/results.png)

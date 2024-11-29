@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# Authors: Tom, Max and MaxGPT ;).
 
 import os
 import subprocess
@@ -7,7 +8,6 @@ from multiprocessing import Pool
 from libnmap.parser import NmapParser
 import datetime
 import re
-import xml.dom.minidom
 
 COLOURS = {
     "blue": "\033[1;34m",
@@ -38,15 +38,19 @@ def banner():
                                                      
     
     @BeeSec
-    Helping you Bee Secure
+    Helping you Bee Secure - https://github.com/BeeSec-UK/
     
-    usage: auto-sslscan.py -i [nmap-ouput.xml] -o [output-directory] -t [num-threads]{COLOURS['reset']}
+    usage: autosslscan.py -i [nmap-ouput.xml] -o [output-directory] -t [num-threads]{COLOURS['reset']}
     
     """
     print(banner_text)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """
+    Parse command line arguments.
+    :return:  The parsed arguments.
+    """
     parser = argparse.ArgumentParser(description="Auto-sslscan - SSL scanning for open ports in Nmap XML report.")
     parser.add_argument("-i", "--input", dest="nmapxml", required=True, help="Path to the Nmap XML output file")
     parser.add_argument("-o", "--output", dest="output_directory", required=True, help="Path to the output directory")
@@ -54,8 +58,13 @@ def parse_args():
                         help="Number of threads for parallel execution")
     return parser.parse_args()
 
-def remove_ansi_escape_sequences(text):
-    # Regular expression to match ANSI escape sequences
+
+def remove_ansi_escape_sequences(text: str) -> str:
+    """
+    Remove ANSI escape sequences from a string.
+    :param text: The text to remove the escape sequences from.
+    :return: The text with the escape sequences removed.
+    """
     ansi_escape = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
     return ansi_escape.sub('', text)
 
@@ -67,7 +76,6 @@ def main():
     output_directory = args.output_directory
     num_threads = args.num_threads
 
-    # Create output directories
     sslscan_folder = os.path.join(output_directory, "sslscan")
     os.makedirs(sslscan_folder, exist_ok=True)
 
@@ -77,68 +85,85 @@ def main():
         if os.path.isfile(item_path):
             os.remove(item_path)
 
-
-    # Parse Nmap XML file and collect hosts and services
-    # format xml file
-    with open(nmapxml, 'r') as file:
-        xml_content = file.read()
-
-    temp = xml.dom.minidom.parseString(xml_content)
-    formatted_xml = temp.toprettyxml(indent="  ")
-
-    with open(nmapxml, 'w') as file:
-        file.write(formatted_xml)
-
     report = NmapParser.parse_fromfile(nmapxml)
-    ssl_services = [(host.address, s.port) for host in report.hosts for s in host.services if
-                    "https" in s.service.lower() or "ssl" in s.service.lower()]
 
-    # Create a multiprocessing pool for parallel SSL scans
+    hosts_with_ssl = 0
+    ssl_services = []
+    for host in report.hosts:
+        host_has_ssl = False
+        for s in host.services:
+            if s.tunnel == "ssl":
+                ssl_services.append(f'{host.address}:{s.port}')
+                host_has_ssl = True
+        if host_has_ssl:
+            hosts_with_ssl += 1
+
+    print(f"{SYMBOLS['plus']} Found {hosts_with_ssl} hosts with {len(ssl_services)} total SSL services\n")
+
+    files_to_make = [
+        "Legacy_SSL_And_TLS_Protocols.txt",
+        "Non_Valid_Certificates.txt",
+        "NULL_Ciphers.txt",
+        "Diffie_Hellman Modulus_<2048-bits.txt",
+        "Untrusted_Certificates.txt",
+        "Weak_Ciphers_<128-bit_or_RC4_CBC.txt",
+        "No_TLS_Fallback_SCSV_Support.txt",
+        "Weak_Signed_Certificate_RSA_Keylength.txt",
+        "SSL_Wildcard_Present.txt",
+        "TLSv1.3_Disabled.txt",
+        "SHA-1_Hash.txt",
+        "Final_Results.txt"
+    ]
+
+    for file in files_to_make:
+        file_path = os.path.join(sslscan_folder, file)
+        with open(file_path, "w") as f:
+            pass  # Create an empty file
+
     with Pool(processes=num_threads) as pool:
         results = pool.map(perform_ssl_scan, ssl_services)
 
-    # Process the results
-    for ip, port, scan_output in results:
+    for result in results:
+        ip, port, scan_output = result
+        #ip, port = ip_port.split(':')
         if scan_output:
-            # Save the SSL scan output to a file
-            output_file = os.path.join(sslscan_folder, f"sslscan-{ip}:{port}.txt")
-            with open(output_file, 'w') as f:
-                f.write(scan_output)
-            print(f"{SYMBOLS['star']} SSL scan results for {ip}:{port}")
-            print(scan_output)
+            # print(scan_output)
+            check_ssl_wildcard(scan_output, f"{sslscan_folder}/SSL_Wildcard_Present.txt", ip, port)
+            check_signed_cert_rsa_keylength(scan_output, f"{sslscan_folder}/Weak_Signed_Certificate_RSA_Keylength.txt", ip, port)
+            check_tls_fallback(scan_output, f"{sslscan_folder}/No_TLS_Fallback_SCSV_Support.txt", ip, port)
+            check_legacy_protocols(scan_output, f"{sslscan_folder}/Legacy_SSL_And_TLS_Protocols.txt", ip, port)
+            check_medium_strength_ciphers(scan_output, f"{sslscan_folder}/Weak_Ciphers_<128-bit_or_RC4_CBC.txt", ip, port)
+            check_null_ciphers(scan_output, f"{sslscan_folder}/NULL_Ciphers.txt", ip, port)
+            check_dhe_ciphers(scan_output, f"{sslscan_folder}/Diffie_Hellman Modulus_<2048-bits.txt", ip, port)
+            check_untrusted_certificate(scan_output, f"{sslscan_folder}/Untrusted_Certificates.txt", ip, port)
+            check_cbc_ciphers(scan_output, f"{sslscan_folder}/Weak_Ciphers_<128-bit_or_RC4_CBC.txt", ip, port)
+            check_rc4_ciphers(scan_output, f"{sslscan_folder}/Weak_Ciphers_<128-bit_or_RC4_CBC.txt", ip, port)
+            check_certificate_expiry(scan_output, f"{sslscan_folder}/Non_Valid_Certificates.txt", ip, port)
+            check_tls_v1_3_disabled(scan_output, f"{sslscan_folder}/TLSv1.3_Disabled.txt", ip, port)
+            check_sha1_hash(scan_output, f"{sslscan_folder}/SHA-1_Hash.txt", ip, port)
 
-    print(f"{SYMBOLS['star']} SSL scan results saved to: {sslscan_folder}")
+    with open(f"{sslscan_folder}/Final_Results.txt", 'a') as f:
+        for text_file in os.listdir(sslscan_folder):
+            if text_file != 'Final_Results.txt':
+                title = f"{text_file.replace('_', ' ').replace('.txt', '')}"
+                with open(f"{sslscan_folder}/{text_file}", 'r') as s:
+                    results = s.read()
+                    if results:
+                        f.write(f"{title}:\n{results}\n")
 
-    # Iterate over SSL scan results and check for legacy protocols
-    for sslscan_result in os.listdir(sslscan_folder):
-        result_path = os.path.join(sslscan_folder, sslscan_result)
-        print(f"\n{SYMBOLS['plus']} Now scanning {result_path}")
-        #remove ANSI escape codes from the output txt
-        with open(result_path, 'r') as f:
-            raw = f.read()
-        clean_text = remove_ansi_escape_sequences(raw)
-        with open(result_path, 'w') as f:
-            f.write(clean_text)
+    print(f'\n{SYMBOLS["plus"]} Please check {sslscan_folder}/Final_Results.txt')
 
-
-        # Read the contents of the file
-        with open(result_path, 'r') as s:
-            scan_output = s.read()
-            check_legacy_protocols(scan_output, result_path)
-            extract_certificate_dates(scan_output, result_path)
-            check_dhe_ciphers(scan_output, result_path)
-            check_untrusted_certificate(scan_output, result_path)
-            check_cbc3_ciphers(scan_output, result_path)
-            check_rc4_ciphers(scan_output, result_path)
-            check_null_ciphers(scan_output, result_path)
-            check_medium_strength_ciphers(scan_output, result_path)
-
-# Function to perform SSL scanning using sslscan
-def perform_ssl_scan(ip_port):
-    ip, port = ip_port
+def perform_ssl_scan(host: str) -> tuple:
+    """
+    Perform an SSL scan on a host.
+    :param host: The host to scan.
+    :return: A tuple containing the host, port, and scan output.
+    """
+    ip, port = host.split(':')
+    print(f"{SYMBOLS['plus']} Started {ip}:{port}")
     try:
         result = subprocess.run(
-            ["sslscan", "--no-sigs", "--no-fallback", f"{ip}:{port}"],
+            ["sslscan", "--no-sigs", f"{ip}:{port}"],
             capture_output=True, text=True, check=True
         )
         return ip, port, result.stdout
@@ -147,259 +172,275 @@ def perform_ssl_scan(ip_port):
         return ip, port, None
 
 
-# Function to check for vulnerable legacy protocols in SSL scan output
-def check_legacy_protocols(scan_output, result_path):
-    legacy_protocols = {"SSLv2", "SSLv3", "TLSv1.0", "TLSv1.1"}
-    vulnerable_protocols = set()
+def check_legacy_protocols(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check for vulnerable legacy protocols in SSL scan output.
+    :param: scan_output (str): The output from the SSL scan.
+    :param: result_path (str): The path to the result file where findings will be appended.
+    :param: ip (str): The IP address of the host.
+    :param: port (str): The SSL port being scanned.
+    :return: None
+    """
+    legacy_protocols = ["SSLv2", "SSLv3", "TLSv1.0", "TLSv1.1"]
 
     for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
         parts = line.split()
         if len(parts) == 2 and parts[1].lower() == "enabled" and parts[0] in legacy_protocols:
-            vulnerable_protocols.add(parts[0])
-            print(f"{SYMBOLS['warn']} Legacy protocols in use")
-
-    if len(vulnerable_protocols) == 0:
-        print(f"{SYMBOLS['plus']} No legacy protocols found!")
-        with open(result_path, 'a') as s:
-            s.write("\n\n+ No legacy protocols found! \n")
-    else:
-        print("Legacy protocols found")
-        with open(result_path, 'a') as s:
-            s.write(f"\n- Legacy protocols found: \n{vulnerable_protocols}")
+            message = f"{ip}:{port}"
+            with open(result_path, 'a') as f:
+                f.write(f"{message}\n")
+            return
 
 
+def check_tls_v1_3_disabled(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if TLSv1.3 is disabled.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lower() == "disabled" and parts[0] == "TLSv1.3":
+            with open(result_path, 'a') as s:
+                s.write(f"{ip}:{port}\n")
+            return
 
-# Function to extract certificate validity dates from the SSL scan output
-def extract_certificate_dates(scan_output, result_path):
+
+def check_certificate_expiry(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the certificate is not valid or is expiring soon.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
     valid_from = None
     valid_until = None
-
     for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
         if line.startswith("Not valid before:"):
             valid_from = line.replace("Not valid before:", "").strip()
-            valid_from = valid_from.replace('\x1b[32m', '').replace('\x1b[0m', '')  # Remove color codes
         elif line.startswith("Not valid after:"):
             valid_until = line.replace("Not valid after:", "").strip()
-            valid_until = valid_until.replace('\x1b[32m', '').replace('\x1b[0m', '')  # Remove color codes
 
-    # Print and write to the file based on what we found
-    if valid_from or valid_until:
-        # Call check_certificate_expiry only if both valid_from and valid_until are found
-        if valid_from and valid_until:
-            expiry_status = check_certificate_expiry(valid_from, valid_until, result_path)
-    else:
-        print(f"{SYMBOLS['warn']} No certificate validity dates found")
-        with open(result_path, 'a') as s:
-            s.write("\n- No certificate validity dates found! \n")
-
-    return valid_from, valid_until
-
-
-
-# Function to check certificate expiry
-def check_certificate_expiry(valid_from, valid_until, result_path):
     current_date = datetime.datetime.utcnow()
     valid_from_date = datetime.datetime.strptime(valid_from, "%b %d %H:%M:%S %Y %Z")
     valid_until_date = datetime.datetime.strptime(valid_until, "%b %d %H:%M:%S %Y %Z")
-
     days_remaining = (valid_until_date - current_date).days
 
-    with open(result_path, 'a') as s:
-        if current_date < valid_from_date:
-            print(f"{SYMBOLS['warn']} Certificate is not yet valid.")
-            s.write("- Certificate Status: Not yet valid \n")
-            return "Not yet valid"
-        elif current_date > valid_until_date:
-            print(f"{SYMBOLS['warn']} SSL Certificate Expired.")
-            s.write("- Certificate Status: Expired \n")
-            return "Expired"
-        elif days_remaining <= 30:
-            print(f"{SYMBOLS['warn']} SSL Certificate expiring in next 30 days.")
-            s.write(f"- Certificate Status: Expiring in {days_remaining} days \n")
-            return f"Expiring in {days_remaining} days"
-        elif days_remaining > 365:
-            print(f"{SYMBOLS['warn']} SSL Certificate expires in >1 year.")
-            s.write("- Certificate Status: Long expiry (>1 year) \n")
-            return "Long expiry"
-        else:
-            print(f"{SYMBOLS['plus']} SSL Certificate is valid with normal expiry.")
-            s.write("+ Certificate Status: Valid with normal expiry \n")
-            return "Valid"
-
-# Function to check for DHE ciphers with <= 1024 bits
-def check_dhe_ciphers(scan_output, result_path):
-    vulnerable_ciphers = set()
-    for line in scan_output.splitlines():
-        parts = line.split()
-        if "DHE" in parts and not any(part.startswith("Curve") for part in parts):
-            if len(parts) >= 7:
-                # print(parts[6])
-                if int(parts[6]) <= 1024:
-                    vulnerable_ciphers.add(parts[-1])
-                    for p in parts:
-                        if p.startswith("DHE-"):
-                            cipher_name = p
-                    print(f"{SYMBOLS['warn']} The cipher {cipher_name} is only {int(parts[6])} bits!")
-                    with open(result_path, 'a') as s:
-                        s.write(f"- The cipher {cipher_name} is only {int(parts[6])} bits! \n")
-
-    # Check if any vulnerable ciphers were found
-    if len(vulnerable_ciphers) == 0:
-        print(f"{SYMBOLS['plus']} No vulnerable DHE ciphers found")
+    if current_date < valid_from_date or current_date > valid_until_date or days_remaining <= 30 or days_remaining > 365:
         with open(result_path, 'a') as s:
-            s.write(f"+ No vulnerable DHE ciphers found \n")
+            s.write(f"{ip}:{port}\n")
+        return
 
-    return vulnerable_ciphers
+
+def check_signed_cert_rsa_keylength(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the RSA key length is less than 2048 bits.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
+        if line.startswith('RSA Key Strength:'):
+            parts = line.split()
+            if int(parts[3]) < 2048:
+                with open(result_path, 'a') as s:
+                    s.write(f"{ip}:{port}\n")
+                return
 
 
-# Function to check if certificate is untrusted (Issuer in red)
-def check_untrusted_certificate(scan_output, result_path):
-    is_untrusted = False
+def check_tls_fallback(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports TLS Fallback SCSV.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
+        if line == 'Server does not support TLS Fallback SCSV':
+            with open(result_path, 'a') as s:
+                s.write(f"{ip}:{port}\n")
+            return
+
+
+def check_3des_ciphers(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports 3DES ciphers.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
+        parts = line.split()
+        if any("3-DES" in part for part in parts):
+            with open(result_path, 'a') as s:
+                s.write(f"{ip}:{port}\n")
+            return
+
+
+def check_dhe_ciphers(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports DHE ciphers with less than 2048-bit modulus.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
+        parts = line.split()
+        if len(parts) >= 7:
+            if parts[4].startswith("DHE") and not any("Curve" in part for part in parts):
+                if int(parts[6]) < 2024:
+                    with open(result_path, 'a') as s:
+                        s.write(f"{ip}:{port}\n")
+                    return
+
+
+def check_untrusted_certificate(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the certificate is untrusted.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
     for line in scan_output.splitlines():
         if "Issuer:" in line and "\x1b[31m" in line:
-            is_untrusted = True
-            message = f"{SYMBOLS['warn']} SSL Certificate is untrusted: Unknown Issuer"
-            print(message)
-
-            # Write to the result file
-            with open(result_path, 'a') as f:
-                f.write(f"{message}\n")
-            break
-
-    if not is_untrusted:
-        message = "SSL Certificate is trusted."
-        print(f"{SYMBOLS['plus']} {message}")
-
-        # Write trusted message to the result file
-        with open(result_path, 'a') as f:
-            f.write(f"+ {message} \n")
-
-    return is_untrusted
+            with open(result_path, 'a') as s:
+                s.write(f"{ip}:{port}\n")
+            return
 
 
-# Function to check for CBC3 ciphers
-def check_cbc3_ciphers(scan_output, result_path):
-    vulnerable_ciphers = set()
+def check_cbc_ciphers(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports CBC ciphers.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
     for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
         parts = line.split()
-        if "DES-CBC3-SHA" in parts:
-            vulnerable_ciphers.add(parts[-1])
-            message = f"{SYMBOLS['warn']} Weak Ciphers: CBC Mode Ciphers in use."
-            print(message)
-
-            # Write to the result file
+        if any("CBC" in part for part in parts):
             with open(result_path, 'a') as f:
-                f.write(f"{message}\n")
-
-    if not vulnerable_ciphers:
-        message = "No vulnerable CBC3 ciphers found."
-        print(f"{SYMBOLS['plus']} {message}")
-
-        # Write no vulnerable ciphers message to the result file
-        with open(result_path, 'a') as f:
-            f.write(f"+ {message} \n")
-
-    return vulnerable_ciphers
+                f.write(f"{ip}:{port}\n")
+            return
 
 
-# Function to check for RC4 ciphers
-def check_rc4_ciphers(scan_output, result_path):
-    vulnerable_ciphers = set()
+def check_sha1_hash(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports SHA-1 hash.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
     for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
         parts = line.split()
-        if "RC4" in parts:
-            vulnerable_ciphers.add(parts[-1])
-            message = f"{SYMBOLS['warn']} Weak Ciphers: RC4 Ciphers in use."
-            print(message)
-
-            # Write to the result file
+        if any("SHA-1" in part for part in parts):
             with open(result_path, 'a') as f:
-                f.write(f"{message}\n")
-
-    if not vulnerable_ciphers:
-        message = "No vulnerable RC4 ciphers found."
-        print(f"{SYMBOLS['plus']} {message}")
-
-        # Write no vulnerable ciphers message to the result file
-        with open(result_path, 'a') as f:
-            f.write(f"+ {message} \n")
-
-    return vulnerable_ciphers
+                f.write(f"{ip}:{port}\n")
+            return
 
 
-# Function to check for NULL ciphers
-def check_null_ciphers(scan_output, result_path):
-    vulnerable_ciphers = set()
+def check_rc4_ciphers(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports RC4 ciphers.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
     for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
         parts = line.split()
-        if "NULL" in parts:
-            vulnerable_ciphers.add(parts[-1])
-            message = f"{SYMBOLS['warn']} Weak Ciphers: NULL Ciphers in use."
-            print(message)
-
-            # Write to the result file
+        if any("RC4" in part for part in parts):
             with open(result_path, 'a') as f:
-                f.write(f"{message}\n")
-
-    if not vulnerable_ciphers:
-        message = "No vulnerable NULL ciphers found."
-        print(f"{SYMBOLS['plus']} {message}")
-
-        # Write no vulnerable ciphers message to the result file
-        with open(result_path, 'a') as f:
-            f.write(f"+ {message} \n")
-
-    # Function to check for medium strength ciphers
-    def check_medium_strength_ciphers(scan_output, result_path):
-        medium_strength_ciphers = set()
-        for line in scan_output.splitlines():
-            parts = line.split()
-            if len(parts) >= 3 and parts[2].isdigit() and int(parts[2]) <= 112:
-                cipher = " ".join(parts[3:])
-                medium_strength_ciphers.add(cipher)
-                message = f"{SYMBOLS['warn']} Weak Ciphers: <= 112 Bit Encryption: {cipher}"
-                print(message)
-
-                # Write to the result file
-                with open(result_path, 'a') as f:
-                    f.write(f"{message}\n")
-
-        if not medium_strength_ciphers:
-            message = "No medium strength ciphers found."
-            print(message)
-
-            # Write no medium strength ciphers message to the result file
-            with open(result_path, 'a') as f:
-                f.write(f"{message}\n")
-        return medium_strength_ciphers
-    return vulnerable_ciphers
+                f.write(f"{ip}:{port}\n")
+            return
 
 
-# Function to check for medium strength ciphers
-def check_medium_strength_ciphers(scan_output, result_path):
-    medium_strength_ciphers = set()
+def check_medium_strength_ciphers(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports medium strength ciphers.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
     for line in scan_output.splitlines():
         if not line.startswith("OpenSSL"):
+            line = remove_ansi_escape_sequences(line)
             parts = line.split()
-            if len(parts) >= 3 and parts[2].isdigit() and int(parts[2]) <= 112:
-                cipher = parts[4]
-                medium_strength_ciphers.add(cipher)
-                message = f"Weak Medium Strength Cipher has only {int(parts[2])} bits: {cipher}"
-                print(f"{SYMBOLS['warn']} {message}")
-
-                # Write to the result file
+            # < 128 bits and >= 1 bit
+            if (len(parts) >= 3 and parts[2].isdigit()
+                    and 1 <= int(parts[2]) < 128):
+                message = f"{ip}:{port}"
                 with open(result_path, 'a') as f:
-                    f.write(f"- {message}\n")
+                    f.write(f"{message}\n")
+                return
 
-    if not medium_strength_ciphers:
-        message = "No medium strength ciphers found."
-        print(f"{SYMBOLS['plus']} {message}")
 
-        # Write no medium strength ciphers message to the result file
-        with open(result_path, 'a') as f:
-            f.write(f"+ {message} \n")
+def check_null_ciphers(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server supports NULL ciphers.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        parts = line.split()
+        if any("NULL" in part for part in parts):
+            message = f"{ip}:{port}"
+            with open(result_path, 'a') as f:
+                f.write(f"{message}\n")
+            return
 
-    return medium_strength_ciphers
+
+def check_ssl_wildcard(scan_output: str, result_path: str, ip: str, port: str) -> None:
+    """
+    Check if the server has a wildcard SSL certificate.
+    :param scan_output: The output from the SSL scan.
+    :param result_path: The path to the result file where findings will be appended.
+    :param ip: The IP address of the host.
+    :param port: The SSL port being scanned.
+    :return: None
+    """
+    for line in scan_output.splitlines():
+        line = remove_ansi_escape_sequences(line)
+        parts = line.split()
+        if line.startswith("Subject:") and parts[1].startswith('*'):
+            message = f"{ip}:{port}"
+            with open(result_path, 'a') as f:
+                f.write(f"{message}\n")
+            return
 
 
 if __name__ == "__main__":
