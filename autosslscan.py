@@ -215,9 +215,16 @@ def main():
     write_final_results(vuln_output_folder)
     write_final_results(starttls_vuln_folder)
 
-    print(f'\n{SYMBOLS["plus"]} Please check {vuln_output_folder}/Final_Results.txt')
-    if extra_ports != 0:
-        print(f'{SYMBOLS["plus"]} Please check {starttls_vuln_folder}/Final_Results.txt')
+    with open(os.path.join(vuln_output_folder, "Final_Results.txt"), 'r') as f:
+        temp1 = f.read()
+
+    with open(os.path.join(starttls_vuln_folder, "Final_Results.txt"), 'r') as f:
+        temp2 = f.read()
+
+    with open(os.path.join(sslscan_folder, "Big_Final_Results.txt"), 'w') as f:
+        f.write(f"SSL Services:\n{temp1}\n\nSTARTTLS Services:\n{temp2}")
+
+    print(f'\n{SYMBOLS["plus"]} Please check {os.path.join(sslscan_folder, "Big_Final_Results.txt")}')
     banner()
 
 
