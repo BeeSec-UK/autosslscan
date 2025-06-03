@@ -1,29 +1,24 @@
-# Auto-SSLScan
-Auto-SSLScan is a Python script designed to automate SSL scanning for open ports found in an Nmap XML report. The script identifies SSL services, runs `sslscan` against the discovered services, and analyses the scan results to detect potential vulnerabilities.
+# autosslscan
 
-## Prerequisites
-- [sslscan](https://github.com/rbsec/sslscan) should be installed and available in your system's PATH.
+**autosslscan** is a Python tool that parses Nmap XML files, identifies SSL/TLS and STARTTLS-enabled services, runs `sslscan`, and reports common SSL misconfigurations.
 
-# Vulnerabilities Detected
-- Legacy SSL and TLS Protocols
-- TLSv1.3 Disabled
-- Certificate Expiry
-- Weak Signed Certificate RSA Keylength
-- No TLS Fallback SCSV Support
-- 3DES Ciphers
-- Diffie-Hellman Modulus < 2048-bits
-- Untrusted Certificate
-- CBC Ciphers
-- SHA-1 Hash
-- RC4 Ciphers
-- Medium Strength Ciphers
-- NULL Ciphers
-- SSL Wildcard Certificate
+### Features
+- Parses Nmap XML and resolves hostnames
+- Detects SSL/TLS support (incl. STARTTLS: FTP, IMAP, SMTP, etc.)
+- Runs `sslscan` in parallel
+- Extracts and categorises vulnerabilities:
+  - Legacy protocols (SSLv2/3, TLS 1.0/1.1)
+  - TLSv1.3 disabled
+  - Expired/self-signed/wildcard certs
+  - Weak key lengths, SHA-1/MD5 hashes
+  - CBC/RC4/NULL/3DES ciphers
+  - No TLS Fallback (SCSV)
+  - Hostname mismatch
 
-## Installation and Usage
-<pre>
-git clone https://github.com/BeeSec-UK/autosslscan
-cd autosslscan
-pip install -r requirements.txt
-auto-sslscan.py -i [nmap-output.xml] -o [output-directory] -t [num-threads]
-</pre>
+### Requirements
+- [sslscan](https://github.com/rbsec/sslscan)
+
+### Usage
+```
+python autosslscan.py -d <nmap-xml-dir> -o <output-dir> [options]
+```
